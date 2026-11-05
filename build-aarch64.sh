@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 mkdir -p build/aarch64
 VER=$(cat VERSION)
 F="-std=gnu11 -O2 -Wall -Wextra -Werror -mcpu=cortex-a55 -DADDIN_VERSION=\"$VER\""
-O="-fPIC -shared -fvisibility=hidden -Wl,-z,defs -Wl,--as-needed -o build/aarch64/mpc_sample_rack.so src/addin.c src/page.c src/rack.c src/json.c -ldl -lpthread"
+O="-fPIC -shared -fvisibility=hidden -Wl,-z,defs -Wl,--as-needed -o build/aarch64/mpc_sample_rack.so src/addin.c src/page.c src/bridge.c src/rack.c src/json.c -ldl -lpthread"
 H="-o build/aarch64/sample-rack-apply src/apply.c src/rack.c src/json.c -ldl -lpthread"
 if command -v aarch64-linux-gnu-gcc >/dev/null && [ -z "${DOCKER:-}" ]; then
   # shellcheck disable=SC2086

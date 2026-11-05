@@ -7,11 +7,13 @@ B=build/host; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$B"
 SAN="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
 cc -std=gnu11 -O1 -Wall -Wextra -Werror $SAN -o "$B/core_test" tests/core_test.c src/rack.c src/json.c -ldl -lpthread
+cc -std=gnu11 -O1 -Wall -Wextra -Werror $SAN -o "$B/bridge_test" tests/bridge_test.c src/rack.c src/json.c -ldl -lpthread
 cc -std=gnu11 -O1 -Wall -Wextra -Werror $SAN -o "$B/sample-rack-apply" src/apply.c src/rack.c src/json.c -ldl -lpthread
 mkdir -p "$T/p"
 python3 tests/fixture.py "$T/p/Temp-Project.xpj" "$T/settings"
 cp "$T/p/Temp-Project.xpj" "$T/orig.xpj"
 ASAN_OPTIONS=detect_leaks=1 "$B/core_test" "$T/p/Temp-Project.xpj" "$T/settings" "$T/edits"
+ASAN_OPTIONS=detect_leaks=1 "$B/bridge_test" "$T/p/Temp-Project.xpj" "$T/settings"
 RACK_NO_SERVICE=1 ASAN_OPTIONS=detect_leaks=1 "$B/sample-rack-apply" "$T/edits" "$T/p/Temp-Project.xpj" ac50.service | tee "$T/log"
 python3 - "$T/orig.xpj" "$T/p/Temp-Project.xpj" "$T/log" "$T/p/Temp-Project.xpj.rack-backup" <<'PY'
 import gzip, json, sys
