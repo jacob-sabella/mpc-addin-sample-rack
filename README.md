@@ -3,6 +3,15 @@
 An addin for the MPC Sample that manages the plugins in a project's inserts. The Sample has no screen for adding or
 removing a plugin, and it can't load or unload one in a running project, so this addin edits the project for it.
 
+![The RACK page on the MPC Sample: the dial moves through the inserts, a press opens the plugin's own page](docs/screenshots/rack-page.gif)
+
+In mpc-addin-commander's browser UI (the same rack, through `src/bridge.c`), with the plugins' panels beside it:
+
+![Commander's rack panel on the MPC Sample](docs/screenshots/commander-rack.png)
+![Pending edits in Commander, before APPLY restarts MPC](docs/screenshots/commander-rack-pending.png)
+![Stompbox in Commander on the MPC Sample](docs/screenshots/commander-stompbox.png)
+![Keyscope in Commander on the MPC Sample](docs/screenshots/commander-keyscope.png)
+
 - **RACK page** (needs mpc-addin-sample-draw-handler 0.3 or later): a long hold of PAD FX opens it. It lists the
   plugins on the input, the outputs, the submixes and the tracks, and lets you add a plugin, turn one on or off, or
   remove one. A dial press on a plugin opens that plugin's own page, if it has one (mpc-vst-plugins' `"sample_page"`).
