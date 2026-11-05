@@ -1,0 +1,7 @@
+# This addin, for the shared installer in mpc-vst-plugins (tools/release/addin; the keys are in its docs/ADDINS.md).
+ADDIN_ID=sample-rack
+ADDIN_NAME="MPC Sample rack addin"
+ADDIN_SO=mpc_sample_rack.so
+ADDIN_CONF=mpc_sample_rack.conf
+ADDIN_FILES="sample-rack-apply"
+ADDIN_DONE="On the MPC Sample a long hold of PAD FX now brings up RACK: the plugins on the input, outputs, submixes and tracks, to add, turn on or off and remove. Needs mpc-addin-sample-draw-handler 0.3 or later. APPLY restarts MPC with the changes in the project."
