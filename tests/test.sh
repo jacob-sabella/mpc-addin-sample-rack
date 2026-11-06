@@ -46,3 +46,19 @@ def blank(b):
 check(blank(n) == blank(o), "nothing else changed")
 print("PASSED" if not fails else "FAILED"); sys.exit(fails != 0)
 PY
+
+# Live on/off: the real addin (unsanitised: it interposes dlsym, as the sanitizers' runtimes need it while they start)
+# preloaded into a stand-in "MPC Sample" that loads a stand-in effect, alone and ahead of another addin that hooks dlsym.
+W="-std=gnu11 -O1 -g -Wall -Wextra -Werror"
+cc $W -fPIC -shared -fvisibility=hidden -DADDIN_VERSION=\"test\" -o "$B/mpc_sample_rack.so" src/addin.c src/page.c src/bridge.c src/live.c src/rack.c src/json.c -ldl -lpthread
+cc $W -fPIC -shared -fvisibility=hidden -o "$B/fake_fx.so" tests/fake_fx.c
+cc $W -fPIC -shared -o "$B/other_hook.so" tests/other_hook.c -ldl
+cc $W -o "$B/MPC Sample" tests/live_host.c -ldl -lm
+mkdir -p "$T/l"
+FIXTURE_FILE_NAM="$PWD/$B/fake_fx.so" python3 tests/fixture.py "$T/l/Temp-Project.xpj" "$T/l/settings"
+printf 'project=%s\nsettings=%s\n' "$T/l/Temp-Project.xpj" "$T/l/settings" > "$T/l/rack.conf"
+export MPC_SAMPLE_RACK_CONF="$T/l/rack.conf"
+LD_PRELOAD="$PWD/$B/mpc_sample_rack.so" "$B/MPC Sample" "$PWD/$B/fake_fx.so" 2>"$T/l/log1" || { cat "$T/l/log1"; exit 1; }
+LD_PRELOAD="$PWD/$B/mpc_sample_rack.so:$PWD/$B/other_hook.so" "$B/MPC Sample" "$PWD/$B/fake_fx.so" other 2>"$T/l/log2" || { cat "$T/l/log2"; exit 1; }
+grep -q "plugin lookups go on to .*other_hook.so" "$T/l/log2" || { echo "FAIL the rack didn't hand the lookup on"; cat "$T/l/log2"; exit 1; }
+echo "ok   the lookup handed on to the next addin that hooks dlsym"

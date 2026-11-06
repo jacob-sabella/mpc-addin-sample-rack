@@ -17,6 +17,11 @@ int rack_apply_start(const rack_edit *e, int n, char *why, size_t wn)
     return 0;
 }
 
+#include "../src/live.h"
+static int nam_live = LIVE_NONE;   /* the stand-in for live.c: NAM's live state */
+int live_state(const char *file) { return !strcmp(file, "NAM") ? nam_live : LIVE_NONE; }
+int live_set(const char *file, int off) { if (strcmp(file, "NAM") || nam_live == LIVE_NONE) return -1; nam_live = off != 0; return 0; }
+
 #include "../src/bridge.c"   /* in this file, to reset its applying flag between cases */
 
 static int fails;
@@ -59,6 +64,21 @@ int main(int argc, char **argv)
     CHECK(apply("{\"edits\":[{\"op\":\"remove\",\"slot\":\"input\",\"index\":1,\"name\":\"Not NAM\"}]}", why) == -1 && strstr(why, "any more"), "a changed insert");
     CHECK(apply("{\"edits\":[]}", why) == -1 && apply("not json", why) == -1 && apply("{\"edits\":[{\"op\":\"zap\",\"slot\":\"input\"}]}", why) == -1,
           "empty, bad JSON, bad op");
+    st = mpc_sample_rack_state();
+    CHECK(st && strstr(st, "\"name\":\"NAM\",\"live\":null"), "state: NAM not running, no live state");
+    free(st);
+    CHECK(mpc_sample_rack_live("input", 1, "NAM", 0, why, sizeof why) == -1 && strstr(why, "isn't running"), "live: not running, refused");
+    nam_live = LIVE_ON;
+    CHECK(mpc_sample_rack_live("input", 1, "NAM", 0, why, sizeof why) == 0 && nam_live == LIVE_OFF, "live: turned off");
+    st = mpc_sample_rack_state();
+    CHECK(st && strstr(st, "\"name\":\"NAM\",\"live\":\"off\""), "state: NAM live off");
+    free(st);
+    CHECK(apply("{\"edits\":[{\"op\":\"add\",\"slot\":\"track:0\",\"plugin\":\"Tuner\"}]}", why) == 0 && ngot == 2 &&
+          got[1].op == RACK_ENABLE && !strcmp(got[1].slot, "input") && got[1].index == 1 && !strcmp(got[1].name, "NAM") && got[1].value == 0,
+          "apply: the live OFF goes into the project too");
+    CHECK(apply("{\"edits\":[{\"op\":\"remove\",\"slot\":\"input\",\"index\":1,\"name\":\"NAM\"}]}", why) == 0 && ngot == 1 &&
+          got[0].op == RACK_REMOVE, "apply: not when the edits already say what happens to it");
+    nam_live = LIVE_NONE;
     printf(fails ? "FAILED\n" : "PASSED\n");
     return fails != 0;
 }

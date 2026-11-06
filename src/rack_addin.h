@@ -17,5 +17,7 @@ void rack_page_start(void);
 /* Save the edits and start sample-rack-apply as a systemd unit of its own (it stops MPC, edits, starts MPC). 0, or -1
  * with the reason. */
 int rack_apply_start(const rack_edit *e, int n, char *why, size_t wn);
+/* Edits e[0..n) with an ENABLE 0 added for each running plugin that is off live and not already in them. New count. */
+int rack_fold_live(const rack_model *m, rack_edit *e, int n, int max);
 
 #endif

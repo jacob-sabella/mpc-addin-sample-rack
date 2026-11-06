@@ -1,16 +1,23 @@
 /* The rack for other addins in the MPC Sample's process: Commander finds these by dlsym (RTLD_DEFAULT) and offers
  * add / remove / on-off in the browser and the app. There is no socket here: the callers are inside MPC, and an apply
  * is the same one the RACK page starts (the edits saved, MPC stopped, the project edited, MPC started again).
- *   int   mpc_sample_rack_api(void)                       the interface version (1)
+ *   int   mpc_sample_rack_api(void)                       the interface version (2: live on/off)
  *   char *mpc_sample_rack_state(void)                     a JSON document (malloc'd; free it): the channels with their
- *                                                         inserts, the plugins MPC knows, whether an apply is running
+ *                                                         inserts (each with "live": "on", "off" or null when MPC
+ *                                                         isn't running it), the plugins MPC knows, whether an apply
+ *                                                         is running
  *   int   mpc_sample_rack_apply(const char *json, char *why, size_t wn)
  *                                                         {"edits":[{"op":"add","slot":"track:0","plugin":"Tuner"},
  *                                                         {"op":"remove","slot":"input","index":1,"name":"NAM"},
  *                                                         {"op":"enable","slot":"input","index":1,"name":"NAM","value":0}]}
- *                                                         0 when MPC is going down for it, else -1 with the reason */
+ *                                                         0 when MPC is going down for it, else -1 with the reason.
+ *                                                         The live OFFs go into the project with the edits.
+ *   int   mpc_sample_rack_live(const char *slot, int index, const char *name, int on, char *why, size_t wn)
+ *                                                         turn a running plugin on or off now, until MPC restarts.
+ *                                                         0, or -1 with the reason */
 #define _GNU_SOURCE
 #include "rack_addin.h"
+#include "live.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +27,29 @@
 
 static atomic_int applying;
 
-EXPORT int mpc_sample_rack_api(void) { return 1; }
+EXPORT int mpc_sample_rack_api(void) { return 2; }
+
+int rack_fold_live(const rack_model *m, rack_edit *e, int n, int max)
+{
+    int n0 = n;
+    for (int s = 0; s < m->nslots; s++)
+        for (int f = 0; f < m->slot[s].nfx; f++) {
+            const rack_slot *sl = &m->slot[s];
+            const rack_fx *x = &sl->fx[f];
+            if (!x->vst || !x->enabled || live_state(x->file) != LIVE_OFF) continue;
+            int seen = 0;
+            for (int i = 0; i < n0 && !seen; i++)
+                seen = e[i].op != RACK_ADD && !strcmp(e[i].slot, sl->id) && e[i].index == x->index && !strcmp(e[i].name, x->name);
+            if (seen || n >= max) continue;
+            memset(&e[n], 0, sizeof e[n]);
+            e[n].op = RACK_ENABLE;
+            snprintf(e[n].slot, sizeof e[n].slot, "%s", sl->id);
+            e[n].index = x->index;
+            snprintf(e[n].name, sizeof e[n].name, "%s", x->name);
+            n++;
+        }
+    return n;
+}
 
 static char *take(struct sb *b)
 {
@@ -57,7 +86,8 @@ EXPORT char *mpc_sample_rack_state(void)
                 sb_printf(&b, "%s{\"index\":%d,\"enabled\":%s,\"vst\":%s,\"name\":", f ? "," : "", x->index, x->enabled ? "true" : "false",
                           x->vst ? "true" : "false");
                 sb_jstr(&b, x->name);
-                sb_puts(&b, "}");
+                int lv = x->vst && x->enabled ? live_state(x->file) : LIVE_NONE;
+                sb_puts(&b, lv == LIVE_ON ? ",\"live\":\"on\"}" : lv == LIVE_OFF ? ",\"live\":\"off\"}" : ",\"live\":null}");
             }
             sb_puts(&b, "]}");
         }
@@ -170,10 +200,30 @@ EXPORT int mpc_sample_rack_apply(const char *json, char *why, size_t wn)
         } else { snprintf(why, wn, "edit %d: op must be add, remove or enable", i + 1); goto out; }
         n++;
     }
+    n = rack_fold_live(m, e, n, RACK_MAX_EDITS);
     if (rack_apply_start(e, n, why, wn)) goto out;
     atomic_store(&applying, 1);
     rc = 0;
 out:
     free(t); free(m); free(pl); free(e);
+    return rc;
+}
+
+EXPORT int mpc_sample_rack_live(const char *slot, int index, const char *name, int on, char *why, size_t wn)
+{
+    rack_model *m = malloc(sizeof *m);
+    char err[200];
+    int rc = -1;
+    if (!m) { snprintf(why, wn, "out of memory"); return -1; }
+    if (!slot || !name) { snprintf(why, wn, "slot and name are needed"); goto out; }
+    if (rack_load(rack_conf()->project, m, err, sizeof err)) { snprintf(why, wn, "%s", err); goto out; }
+    const rack_slot *sl = slot_by_id(m, slot);
+    const rack_fx *f = sl ? fx_at(sl, index) : NULL;
+    if (!f || strcmp(f->name, name)) { snprintf(why, wn, "%s isn't at insert %d of %s any more", name, index + 1, sl ? sl->label : slot); goto out; }
+    if (!f->vst) { snprintf(why, wn, "%s is one of MPC's own effects: it stays as it is", name); goto out; }
+    if (!f->enabled || live_set(f->file, !on)) { snprintf(why, wn, "MPC isn't running %s: turn it on with an apply", name); goto out; }
+    rc = 0;
+out:
+    free(m);
     return rc;
 }

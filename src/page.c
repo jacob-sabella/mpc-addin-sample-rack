@@ -2,13 +2,15 @@
  *
  * The list: every channel (input, outputs, submixes, tracks) with its inserts, and "+ ADD PLUGIN" where an insert slot
  * is free. The dial moves; the keys above the screen act on the selected row (their labels say what they do). MPC's own
- * effects are shown and left alone. Changes queue up (pink) until APPLY, which restarts MPC with them in the project.
+ * effects are shown and left alone. ON/OFF on a plugin MPC is running acts at once (live.h) and lasts until MPC restarts;
+ * other changes queue up (pink) until APPLY, which restarts MPC with them, and with the live OFFs, in the project.
  * Keys: plugin row  ON/OFF  REMOVE  APPLY;  "+ ADD" row  ADD  -  APPLY;  queued add  -  UNDO  APPLY.
  * ADD opens the list of effect plugins MPC knows; APPLY asks first. Pressing the dial in on a plugin opens that plugin's
  * own page if it has one (by its name; a long hold of the page button comes back here); on "+ ADD" or in the list of
  * plugins it does what the middle-key ADD does. */
 #define _GNU_SOURCE
 #include "rack_addin.h"
+#include "live.h"
 #include "sample_draw.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -26,6 +28,7 @@ static struct {
     char err[160];
     rack_edit e[RACK_MAX_EDITS]; int ne;
     rack_plugin pl[RACK_MAX_PLUGINS]; int np;
+    signed char live[RACK_MAX_SLOTS][RACK_MAX_FX];   /* live_state of each insert, read every frame */
     int mode, sel, top, bsel, btop, add_slot;
     char msg[160];
     long long last_frame;
@@ -45,11 +48,17 @@ static int find(int op, const char *slot, int index, const char *name)
 static void drop(int i) { if (i >= 0 && i < P.ne) { memmove(&P.e[i], &P.e[i + 1], (size_t)(P.ne - i - 1) * sizeof *P.e); P.ne--; } }
 static int queue(rack_edit e) { if (P.ne >= RACK_MAX_EDITS) return -1; P.e[P.ne++] = e; return 0; }
 static int fx_removed(const rack_slot *s, const rack_fx *f) { return find(RACK_REMOVE, s->id, f->index, f->name) >= 0; }
+static int live_of(const rack_slot *s, const rack_fx *f) { return P.live[s - P.m.slot][f - s->fx]; }
 static int fx_on(const rack_slot *s, const rack_fx *f)
 {
     int i = find(RACK_ENABLE, s->id, f->index, f->name);
-    return i >= 0 ? P.e[i].value : f->enabled;
+    if (i >= 0) return P.e[i].value;
+    int lv = live_of(s, f);
+    return lv == LIVE_NONE ? f->enabled : lv == LIVE_ON;
 }
+/* the queued edits and the live OFFs, as APPLY will write them */
+static int all_edits(rack_edit *out) { memcpy(out, P.e, (size_t)P.ne * sizeof *out); return rack_fold_live(&P.m, out, P.ne, RACK_MAX_EDITS); }
+static int apply_count(void) { rack_edit e[RACK_MAX_EDITS]; return all_edits(e); }
 static int slot_count(const rack_slot *s)   /* inserts once the queue is applied */
 {
     int n = 0;
@@ -128,13 +137,14 @@ static void key(int k)
         if (k == 0) P.mode = M_LIST;
         else if (k == 2) {
             char why[160];
-            if (rack_apply_start(P.e, P.ne, why, sizeof why) == 0) P.mode = M_APPLYING;
+            rack_edit e[RACK_MAX_EDITS];
+            if (rack_apply_start(e, all_edits(e), why, sizeof why) == 0) P.mode = M_APPLYING;
             else { snprintf(P.msg, sizeof P.msg, "%s", why); P.mode = M_MESSAGE; }
         }
         return;
     }
     if (P.mode != M_LIST) return;
-    if (k == 2) { if (P.ne) P.mode = M_CONFIRM; return; }
+    if (k == 2) { if (apply_count()) P.mode = M_CONFIRM; return; }
     if (s < 0) return;
     rack_slot *sl = &P.m.slot[r[s].slot];
     if (r[s].kind == R_FX) {
@@ -144,8 +154,10 @@ static void key(int k)
         rack_edit e = { .slot = "", .index = f->index };
         snprintf(e.slot, sizeof e.slot, "%s", sl->id);
         snprintf(e.name, sizeof e.name, "%s", f->name);
-        if (k == 0 && rm < 0) {   /* on/off: queue the opposite, or take back a queued one */
+        int lv = live_of(sl, f);
+        if (k == 0 && rm < 0) {   /* on/off: now when MPC is running it, else queue the opposite or take back a queued one */
             if (en >= 0) drop(en);
+            else if (lv != LIVE_NONE) { if (live_set(f->file, lv == LIVE_ON) == 0) P.live[r[s].slot][r[s].fx] = lv == LIVE_ON ? LIVE_OFF : LIVE_ON; }
             else { e.op = RACK_ENABLE; e.value = !f->enabled; queue(e); }
         } else if (k == 1) {
             if (rm >= 0) drop(rm);
@@ -215,8 +227,9 @@ static void list_view(sdc_canvas *cv)
         } else if (r[s].kind == R_NEW) k1 = "UNDO";
         else if (r[s].kind == R_ADD) k0 = "ADD";
     }
-    snprintf(lab, sizeof lab, P.ne ? "APPLY %d" : "APPLY", P.ne);
-    keys(cv, k0, k1, lab, P.ne > 0);
+    int na = apply_count();
+    snprintf(lab, sizeof lab, na ? "APPLY %d" : "APPLY", na);
+    keys(cv, k0, k1, lab, na > 0);
     sdc_text(cv, 8, 27, 1, PINK, "RACK");
     fit(t, sizeof t, P.m.project[0] ? P.m.project : "", 30);
     sdc_text(cv, 40, 27, 1, DIM, t);
@@ -237,7 +250,7 @@ static void list_view(sdc_canvas *cv)
             sdc_text(cv, 8, y, 2, CYAN, t);
         } else if (r[i].kind == R_FX) {
             rack_fx *f = &sl->fx[r[i].fx];
-            int rm = fx_removed(sl, f), on = fx_on(sl, f), changed = rm || on != f->enabled;
+            int rm = fx_removed(sl, f), on = fx_on(sl, f), changed = rm || find(RACK_ENABLE, sl->id, f->index, f->name) >= 0;
             char nm[64];
             snprintf(nm, sizeof nm, "%d %s", f->index + 1, f->name);
             fit(t, sizeof t, nm, 19);
@@ -256,7 +269,8 @@ static void list_view(sdc_canvas *cv)
             sdc_text(cv, 20, y, 2, DIM, "+ ADD PLUGIN");
         }
     }
-    sdc_text(cv, 8, 230, 1, LOCK, "DIAL: MOVE  PRESS: OPEN  HOLD PAD FX: CLOSE");
+    int live_off = s >= 0 && r[s].kind == R_FX && live_of(&P.m.slot[r[s].slot], &P.m.slot[r[s].slot].fx[r[s].fx]) == LIVE_OFF;
+    sdc_text(cv, 8, 230, 1, live_off ? DIM : LOCK, live_off ? "OFF UNTIL MPC RESTARTS: APPLY KEEPS IT OFF" : "DIAL: MOVE  PRESS: OPEN  HOLD PAD FX: CLOSE");
 }
 
 static void browse_view(sdc_canvas *cv)
@@ -287,13 +301,15 @@ static void confirm_view(sdc_canvas *cv)
 {
     keys(cv, "CANCEL", "", "RESTART", 1);
     char t[64];
-    snprintf(t, sizeof t, "APPLY %d CHANGE%s?", P.ne, P.ne == 1 ? "" : "S");
+    rack_edit all[RACK_MAX_EDITS];
+    int na = all_edits(all);
+    snprintf(t, sizeof t, "APPLY %d CHANGE%s?", na, na == 1 ? "" : "S");
     sdc_text(cv, 8, 40, 2, TEXT, t);
     sdc_text(cv, 8, 66, 2, PINK, "MPC RESTARTS");
     sdc_text(cv, 8, 86, 1, DIM, "ABOUT 20 SECONDS, AUDIO STOPS MEANWHILE.");
     sdc_text(cv, 8, 98, 1, DIM, "THE PROJECT COMES BACK WITH THE CHANGES.");
-    for (int i = 0, y = 118; i < P.ne && y < 220; i++, y += 12) {
-        const rack_edit *e = &P.e[i];
+    for (int i = 0, y = 118; i < na && y < 220; i++, y += 12) {
+        const rack_edit *e = &all[i];
         char line[96];
         const char *slot = e->slot;
         for (int s = 0; s < P.m.nslots; s++) if (!strcmp(P.m.slot[s].id, e->slot)) slot = P.m.slot[s].label;
@@ -316,10 +332,15 @@ static void render(void *user, sdc_canvas *cv)
         char err[160];
         int r = rack_load(rack_conf()->project, &m, err, sizeof err);
         pthread_mutex_lock(&P.mu);
-        if (r == 0) { P.m = m; P.err[0] = 0; } else snprintf(P.err, sizeof P.err, "%s", err);
+        if (r == 0) { P.m = m; P.err[0] = 0; memset(P.live, LIVE_NONE, sizeof P.live); } else snprintf(P.err, sizeof P.err, "%s", err);
         pthread_mutex_unlock(&P.mu);
     }
     pthread_mutex_lock(&P.mu);
+    for (int s = 0; s < P.m.nslots; s++)
+        for (int f = 0; f < P.m.slot[s].nfx; f++) {
+            const rack_fx *x = &P.m.slot[s].fx[f];
+            P.live[s][f] = (signed char)(x->vst && x->enabled ? live_state(x->file) : LIVE_NONE);
+        }
     sdc_fill(cv, 0, 0, cv->w, cv->h, BG);
     if (P.mode == M_BROWSE) browse_view(cv);
     else if (P.mode == M_CONFIRM) confirm_view(cv);
@@ -356,6 +377,7 @@ static void *page_thread(void *arg)
 
 void rack_page_start(void)
 {
+    memset(P.live, LIVE_NONE, sizeof P.live);
     pthread_t t;
     if (pthread_create(&t, NULL, page_thread, NULL) == 0) pthread_detach(t);
 }

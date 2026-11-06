@@ -1,11 +1,12 @@
 """A small project in the MPC Sample's format (gzip: five header lines, then JSON), shaped like a real one: the input,
 two outputs, a submix, a drum track and the submix/output programs that mirror the mixer. Also a settings file."""
-import gzip, json, sys
+import gzip, json, os, sys
 
 def fx(i, name, fmt="MPC", on=True):
+    f = os.environ.get("FIXTURE_FILE_" + name.replace(" ", "_"), name)   # a real library for the live test
     return {"index": i, "plugin": {"version": 2, "is64Bits": True, "description": {"version": 1, "name": name,
             "descriptiveName": name, "pluginFormatName": fmt, "category": "", "manufacturerName": "x",
-            "fileOrIdentifier": name, "uid": 1}, "state": "", "programNumber": 0}, "enable": on}
+            "fileOrIdentifier": f, "uid": 1}, "state": "", "programNumber": 0}, "enable": on}
 
 def mix(*effects):
     return {"volume": 1.0, "inserts": {"insertsEnabled": True, "effects": list(effects)}}

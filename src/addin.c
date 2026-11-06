@@ -2,6 +2,7 @@
  * "MPC Sample" process. Settings: mpc_sample_rack.conf next to the library (or $MPC_SAMPLE_RACK_CONF). */
 #define _GNU_SOURCE
 #include "rack_addin.h"
+#include "live.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <limits.h>
@@ -108,6 +109,7 @@ __attribute__((visibility("default"))) int mpc_sample_rack_start(void)
     else snprintf(path, sizeof path, "%s/mpc_sample_rack.conf", C.dir[0] ? C.dir : ".");
     conf_load(path);
     if (!C.enabled) { RLOG("disabled in %s\n", path); return -1; }
+    live_enable();
     rack_page_start();
     RLOG("%s: project %s, plugins from %s\n", ADDIN_VERSION, C.project, C.settings);
     return 0;

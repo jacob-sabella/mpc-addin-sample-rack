@@ -151,6 +151,7 @@ static void fx_of(const char *s, const struct jtok *t, int o, rack_fx *f)
     if (json_str(s, t, json_get(s, t, d, "name"), f->name, sizeof f->name)) snprintf(f->name, sizeof f->name, "?");
     json_str(s, t, json_get(s, t, d, "pluginFormatName"), fmt, sizeof fmt);
     f->vst = !strcmp(fmt, "VST");
+    if (json_str(s, t, json_get(s, t, d, "fileOrIdentifier"), f->file, sizeof f->file)) f->file[0] = 0;
 }
 
 static void add_slot(const char *s, const struct jtok *t, rack_model *m, const char *id, const char *label)

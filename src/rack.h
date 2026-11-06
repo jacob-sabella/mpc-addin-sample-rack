@@ -13,8 +13,8 @@
 #define RACK_MAX_EDITS 32
 
 /* One insert: index is its slot on the channel (0-3), not its place in the list. vst: a plugin (else MPC's own effect,
- * which the rack shows but never changes). */
-typedef struct { int index, enabled, vst; char name[64]; } rack_fx;
+ * which the rack shows but never changes), file: its library. */
+typedef struct { int index, enabled, vst; char name[64], file[256]; } rack_fx;
 /* A channel: id is "input", "output:N", "submix:N" or "track:N"; label is for the screen. */
 typedef struct { char id[24], label[48]; int nfx; rack_fx fx[RACK_MAX_FX]; } rack_slot;
 typedef struct { int nslots; rack_slot slot[RACK_MAX_SLOTS]; char project[64]; } rack_model;
