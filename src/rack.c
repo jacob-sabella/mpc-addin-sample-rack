@@ -165,13 +165,39 @@ static void add_slot(const char *s, const struct jtok *t, rack_model *m, const c
     for (int i = 0; i < t[e].size && sl->nfx < RACK_MAX_FX; i++) fx_of(s, t, item(t, e, i), &sl->fx[sl->nfx++]);
 }
 
+/* The drum pads routed to submix sub (audioRoute destination 1, sub-index sub), as "PAD A13" or "PADS A13 A14 +2": on the
+ * MPC Sample a submix's insert is the Knob FX of the pads sent to it (device, 2026-11-24). Pads are named the MPC way:
+ * instrument i is bank A + i / 16, pad i % 16 + 1. Empty when none. */
+static void submix_pads(const char *s, const struct jtok *t, int data, int sub, char *out, size_t n)
+{
+    char list[16] = ""; int count = 0, shown = 0;   /* two pads: "H16 H16" */
+    int tracks = path(s, t, data, "tracks");
+    for (int i = 0; tracks >= 0 && i < t[tracks].size; i++) {
+        int ins = path(s, t, item(t, tracks, i), "program.drum.instruments");
+        for (int k = 0; ins >= 0 && t[ins].type == J_ARR && k < t[ins].size; k++) {
+            int r = path(s, t, item(t, ins, k), "mixable.audioRoute");
+            if (num(s, t, json_get(s, t, r, "destination"), -1) != 1 || num(s, t, json_get(s, t, r, "audioRouteSubIndex"), -1) != sub) continue;
+            if (shown < 2) {
+                size_t l = strlen(list);
+                snprintf(list + l, sizeof list - l, "%s%c%d", shown ? " " : "", 'A' + (k / 16) % 26, k % 16 + 1);
+                shown++;
+            }
+            count++;
+        }
+    }
+    if (!count) { out[0] = 0; return; }
+    int more = count - shown > 99 ? 99 : count - shown;
+    if (more > 0) snprintf(out, n, "PADS %s +%d", list, more);
+    else snprintf(out, n, "%s %s", count > 1 ? "PADS" : "PAD", list);
+}
+
 int rack_model_of(const char *s, const struct jtok *t, rack_model *m)
 {
     m->nslots = 0;
     int data = path(s, t, 0, "data");
     if (data < 0) return -1;
-    char id[24], label[48];
-    add_slot(s, t, m, "input", "INPUT");
+    char id[24], label[64];
+    add_slot(s, t, m, "input", "INPUT FX");   /* the MPC Sample's Input FX */
     int outs = path(s, t, data, "mixer.outputs");
     for (int i = 0; outs >= 0 && i < t[outs].size; i++) {
         snprintf(id, sizeof id, "output:%d", i);
@@ -181,7 +207,10 @@ int rack_model_of(const char *s, const struct jtok *t, rack_model *m)
     }
     int subs = path(s, t, data, "mixer.submixes");
     for (int i = 0; subs >= 0 && i < t[subs].size; i++) {
-        snprintf(id, sizeof id, "submix:%d", i); snprintf(label, sizeof label, "SUBMIX %d", i + 1);
+        char pads[40];
+        submix_pads(s, t, data, i, pads, sizeof pads);
+        snprintf(id, sizeof id, "submix:%d", i);
+        if (pads[0]) snprintf(label, sizeof label, "SUBMIX %d: %.40s", i + 1, pads); else snprintf(label, sizeof label, "SUBMIX %d", i + 1);
         add_slot(s, t, m, id, label);
     }
     /* tracks: their program's channel. Submix (8) and output (9) programs mirror the mixer's channels above, and MPC

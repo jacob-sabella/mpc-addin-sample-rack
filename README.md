@@ -15,6 +15,11 @@ In mpc-addin-commander's browser UI (the same rack, through `src/bridge.c`), wit
 - **RACK page** (needs mpc-addin-sample-draw-handler 0.3 or later): a long hold of PAD FX opens it. It lists the
   plugins on the input, the outputs, the submixes and the tracks, and lets you add a plugin, turn one on or off, or
   remove one. A dial press on a plugin opens that plugin's own page, if it has one (mpc-vst-plugins' `"sample_page"`).
+  On MPC Sample 1.4 a pad's Knob FX is Submix 1's insert, so that channel's header names the pads sent to it
+  (`SUBMIX 1: PAD A13`), and the input's is the Input FX.
+- **PAGES** (needs the draw handler 1.1): after the channels, every plugin page that is open, including ones not on a
+  mixer insert. Each shows the channel running it when only one channel has that plugin, otherwise its id; pages with
+  the same name are numbered. OPEN or the dial press opens one.
 - **ON/OFF is live** for a plugin MPC is running: its input goes straight to its output (a one-block crossfade, so no
   click), at once and without a restart, until MPC restarts. APPLY writes the live OFFs into the project with the other
   changes, so they stay off. A plugin that is off in the project isn't running, so turning it on still takes APPLY.
@@ -34,7 +39,8 @@ In mpc-addin-commander's browser UI (the same rack, through `src/bridge.c`), wit
 ## Settings
 
 `mpc_sample_rack.conf`, next to the library: `enabled` (0 leaves it loaded but idle), `project`, `settings` (the plugins
-MPC knows) and `service` (the one APPLY restarts, `ac50.service`).
+MPC knows; left out, 1.4's `/data/Settings/MPC Sample/MPC Sample.settings`, else 1.3's under `Settings/Akai`) and
+`service` (the one APPLY restarts, `ac50.service`).
 
 ## Install
 

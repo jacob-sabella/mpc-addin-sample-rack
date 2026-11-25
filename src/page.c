@@ -7,7 +7,10 @@
  * Keys: plugin row  ON/OFF  REMOVE  APPLY;  "+ ADD" row  ADD  -  APPLY;  queued add  -  UNDO  APPLY.
  * ADD opens the list of effect plugins MPC knows; APPLY asks first. Pressing the dial in on a plugin opens that plugin's
  * own page if it has one (by its name; a long hold of the page button comes back here); on "+ ADD" or in the list of
- * plugins it does what the middle-key ADD does. */
+ * plugins it does what the middle-key ADD does.
+ * PAGES, after the channels: every plugin page open on the draw handler (draw handler 1.1+), each with where it runs
+ * when one insert has that plugin. On the MPC Sample a Knob FX is Submix 1's insert (its header names the pads routed
+ * there) and the Input FX is the input's. Pages that share a name are numbered; OPEN or the dial press opens that one. */
 #define _GNU_SOURCE
 #include "rack_addin.h"
 #include "live.h"
@@ -19,7 +22,8 @@
 #include <time.h>
 
 enum { M_LIST, M_BROWSE, M_CONFIRM, M_APPLYING, M_MESSAGE };
-enum { R_HEAD, R_FX, R_NEW, R_ADD };
+enum { R_HEAD, R_FX, R_NEW, R_ADD, R_PAGE };   /* R_HEAD with slot -1: the PAGES header */
+#define MAX_PAGES 16
 typedef struct { int kind, slot, fx, edit; } row;
 
 static struct {
@@ -32,6 +36,7 @@ static struct {
     int mode, sel, top, bsel, btop, add_slot;
     char msg[160];
     long long last_frame;
+    mpc_sdraw_info pages[MAX_PAGES]; int npages;   /* the other open pages, from the draw handler */
 } P = { .mu = PTHREAD_MUTEX_INITIALIZER };
 static sdc_page page;
 
@@ -83,7 +88,7 @@ static const char *in_use(const char *name)
 }
 
 /* ---- the rows: headers aren't selectable ---- */
-#define MAX_ROWS (RACK_MAX_SLOTS * (RACK_MAX_FX + 2) + RACK_MAX_EDITS)
+#define MAX_ROWS (RACK_MAX_SLOTS * (RACK_MAX_FX + 2) + RACK_MAX_EDITS + MAX_PAGES + 1)
 static int rows(row *r)
 {
     int n = 0;
@@ -94,6 +99,8 @@ static int rows(row *r)
         for (int i = 0; i < P.ne; i++) if (P.e[i].op == RACK_ADD && !strcmp(P.e[i].slot, sl->id)) r[n++] = (row){ R_NEW, s, -1, i };
         if (slot_count(sl) < RACK_FX_SLOTS) r[n++] = (row){ R_ADD, s, -1, -1 };
     }
+    if (P.npages) r[n++] = (row){ R_HEAD, -1, -1, -1 };
+    for (int i = 0; i < P.npages; i++) r[n++] = (row){ R_PAGE, -1, i, -1 };
     return n;
 }
 /* the selected row (selectable rows counted), or -1 */
@@ -113,7 +120,7 @@ static void key(int k)
     if (k == 3) {   /* the dial pressed in */
         if (P.mode == M_BROWSE) k = 2;
         else if (P.mode != M_LIST || s < 0) return;
-        else if (r[s].kind == R_ADD) k = 0;
+        else if (r[s].kind == R_ADD || r[s].kind == R_PAGE) k = 0;
         else if (r[s].kind == R_FX) {
             rack_fx *f = &P.m.slot[r[s].slot].fx[r[s].fx];
             if (sdc_page_show(&page, f->name) != 0) {
@@ -146,6 +153,13 @@ static void key(int k)
     if (P.mode != M_LIST) return;
     if (k == 2) { if (apply_count()) P.mode = M_CONFIRM; return; }
     if (s < 0) return;
+    if (r[s].kind == R_PAGE) {
+        if (k == 0 && sdc_page_show_id(&page, P.pages[r[s].fx].id) != 0) {
+            snprintf(P.msg, sizeof P.msg, "%s IS NO LONGER OPEN", P.pages[r[s].fx].name);
+            P.mode = M_MESSAGE;
+        }
+        return;
+    }
     rack_slot *sl = &P.m.slot[r[s].slot];
     if (r[s].kind == R_FX) {
         rack_fx *f = &sl->fx[r[s].fx];
@@ -217,7 +231,8 @@ static void list_view(sdc_canvas *cv)
     int n = rows(r), s = selected(r, n);
     char t[64], lab[16];
     const char *k0 = "", *k1 = "";
-    if (s >= 0) {
+    if (s >= 0 && r[s].kind == R_PAGE) k0 = "OPEN";
+    else if (s >= 0) {
         rack_slot *sl = &P.m.slot[r[s].slot];
         if (r[s].kind == R_FX && sl->fx[r[s].fx].vst) {
             rack_fx *f = &sl->fx[r[s].fx];
@@ -243,9 +258,29 @@ static void list_view(sdc_canvas *cv)
     if (P.top > n - 1) P.top = 0;
     for (int i = P.top; i < n && i < P.top + vis; i++) {
         int y = y0 + (i - P.top) * rh;
-        rack_slot *sl = &P.m.slot[r[i].slot];
+        rack_slot *sl = r[i].slot >= 0 ? &P.m.slot[r[i].slot] : NULL;
         if (i == s) { sdc_fill(cv, 0, y - 2, cv->w, rh, SEL); sdc_fill(cv, 0, y - 2, 3, rh, PINK); }
-        if (r[i].kind == R_HEAD) {
+        if (r[i].kind == R_HEAD && !sl) {
+            sdc_text(cv, 8, y, 2, CYAN, "PAGES");
+            sdc_text(cv, 8 + sdc_text_width("PAGES", 2) + 8, y + 4, 1, DIM, "EVERY OPEN PLUGIN PAGE");
+        } else if (r[i].kind == R_PAGE) {
+            const mpc_sdraw_info *pg = &P.pages[r[i].fx];
+            int dup = 0, nth = 0;
+            for (int j = 0; j < P.npages; j++) if (!strcmp(P.pages[j].name, pg->name)) { dup++; if (j <= r[i].fx) nth++; }
+            char nm[80], up[48]; size_t q = 0;
+            for (const char *c = pg->name; *c && q + 1 < sizeof up; c++) up[q++] = (*c >= 'a' && *c <= 'z') ? (char)(*c - 32) : *c;
+            up[q] = 0;
+            if (dup > 1) snprintf(nm, sizeof nm, "%s #%d", up, nth); else snprintf(nm, sizeof nm, "%s", up);
+            fit(t, sizeof t, nm, 19);
+            sdc_text(cv, 20, y, 2, TEXT, t);
+            const char *where = NULL; int on = 0;   /* the channel running it, when only one has it */
+            for (int a = 0; a < P.m.nslots; a++)
+                for (int f = 0; f < P.m.slot[a].nfx; f++)
+                    if (P.m.slot[a].fx[f].vst && !strcmp(P.m.slot[a].fx[f].name, pg->name)) { where = P.m.slot[a].label; on++; }
+            char wl[48];
+            if (on == 1) fit(wl, sizeof wl, where, 22); else snprintf(wl, sizeof wl, "ID %d", pg->id);
+            sdc_text(cv, cv->w - 8 - sdc_text_width(wl, 1), y + 4, 1, DIM, wl);
+        } else if (r[i].kind == R_HEAD) {
             fit(t, sizeof t, sl->label, 24);
             sdc_text(cv, 8, y, 2, CYAN, t);
         } else if (r[i].kind == R_FX) {
@@ -335,7 +370,12 @@ static void render(void *user, sdc_canvas *cv)
         if (r == 0) { P.m = m; P.err[0] = 0; memset(P.live, LIVE_NONE, sizeof P.live); } else snprintf(P.err, sizeof P.err, "%s", err);
         pthread_mutex_unlock(&P.mu);
     }
+    mpc_sdraw_info pg[MAX_PAGES];
+    int npg = sdc_page_list(&page, pg, MAX_PAGES);   /* -1: a draw handler without list (older than 1.1) */
     pthread_mutex_lock(&P.mu);
+    P.npages = npg < 0 ? 0 : npg > MAX_PAGES ? MAX_PAGES : npg;
+    memcpy(P.pages, pg, (size_t)P.npages * sizeof *pg);
+    { row r[MAX_ROWS]; int k = selectable(r, rows(r)); if (P.sel >= k) P.sel = k ? k - 1 : 0; }   /* a page closed under us */
     for (int s = 0; s < P.m.nslots; s++)
         for (int f = 0; f < P.m.slot[s].nfx; f++) {
             const rack_fx *x = &P.m.slot[s].fx[f];

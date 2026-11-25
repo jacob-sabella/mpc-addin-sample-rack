@@ -16,7 +16,7 @@
  * which the rack shows but never changes), file: its library. */
 typedef struct { int index, enabled, vst; char name[64], file[256]; } rack_fx;
 /* A channel: id is "input", "output:N", "submix:N" or "track:N"; label is for the screen. */
-typedef struct { char id[24], label[48]; int nfx; rack_fx fx[RACK_MAX_FX]; } rack_slot;
+typedef struct { char id[24], label[64]; int nfx; rack_fx fx[RACK_MAX_FX]; } rack_slot;
 typedef struct { int nslots; rack_slot slot[RACK_MAX_SLOTS]; char project[64]; } rack_model;
 
 /* A plugin MPC knows (its settings' plugin list for this device). */

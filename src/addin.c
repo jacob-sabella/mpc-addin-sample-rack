@@ -22,7 +22,7 @@
 static rack_settings C = {
     .enabled = 1,
     .project = "/data/TempProjects/Temp-Project.xpj",
-    .settings = "/data/Settings/Akai/MPC Sample/MPC Sample.settings",
+    .settings = "",   /* found at start: settings_pick() */
     .service = "ac50.service",
 };
 const rack_settings *rack_conf(void) { return &C; }
@@ -98,6 +98,19 @@ static int is_sample(void)
     return !strcmp(b ? b + 1 : exe, "MPC Sample");
 }
 
+/* MPC's settings file when the conf doesn't name one. 1.4 moved it to Settings/MPC Sample, and a Sample updated from 1.3
+ * keeps 1.3's Settings/Akai/MPC Sample file, untouched (device, 2026-11-24): 1.4's wins. 1.3's path, which older confs
+ * name, is taken as "not named" for the same reason. */
+static void settings_pick(void)
+{
+    static const char *const cand[] = { "/data/Settings/MPC Sample/MPC Sample.settings",
+                                        "/data/Settings/Akai/MPC Sample/MPC Sample.settings" };
+    if (C.settings[0] && strcmp(C.settings, cand[1])) return;
+    for (size_t i = 0; i < sizeof cand / sizeof *cand; i++)
+        if (!access(cand[i], R_OK)) { snprintf(C.settings, sizeof C.settings, "%s", cand[i]); return; }
+    snprintf(C.settings, sizeof C.settings, "%s", cand[0]);
+}
+
 __attribute__((visibility("default"))) int mpc_sample_rack_start(void)
 {
     static atomic_int started;
@@ -108,6 +121,7 @@ __attribute__((visibility("default"))) int mpc_sample_rack_start(void)
     if (env) snprintf(path, sizeof path, "%s", env);
     else snprintf(path, sizeof path, "%s/mpc_sample_rack.conf", C.dir[0] ? C.dir : ".");
     conf_load(path);
+    settings_pick();
     if (!C.enabled) { RLOG("disabled in %s\n", path); return -1; }
     live_enable();
     rack_page_start();

@@ -18,7 +18,7 @@
  * K1-K3 while the page has the screen (and, 0.4+, the dial pressed in: key 3) (pads, transport and every other button stay with MPC). The callback runs on the
  * addin's thread; a page drawn from state it changes shows the change on the next frame.
  *
- * The API struct below is a copy of mpc-addin-sample-draw-handler's src/mpc_sample_draw.h (API version 3): keep them
+ * The API struct below is a copy of mpc-addin-sample-draw-handler's src/mpc_sample_draw.h (API version 4): keep them
  * in step. The font is a 5x7 bitmap (upper case, digits and common punctuation), drawn at any whole-number scale. */
 #ifndef MPC_VST_SAMPLE_DRAW_H
 #define MPC_VST_SAMPLE_DRAW_H
@@ -35,7 +35,7 @@
 #ifndef MPC_SAMPLE_DRAW_H
 #define MPC_SAMPLE_DRAW_H
 #define MPC_SDRAW_ENTRY "mpc_sample_draw_api"
-#define MPC_SDRAW_API_VERSION 3
+#define MPC_SDRAW_API_VERSION 4
 typedef struct mpc_sdraw_client mpc_sdraw_client;
 typedef void (*mpc_sdraw_focus_fn)(void *user, int has_screen);
 enum { MPC_SDRAW_EV_KEY = 1, MPC_SDRAW_EV_DIAL = 2, MPC_SDRAW_EV_KNOB = 3, MPC_SDRAW_EV_KNOB_AT = 4 };
@@ -43,6 +43,7 @@ enum { MPC_SDRAW_EV_KEY = 1, MPC_SDRAW_EV_DIAL = 2, MPC_SDRAW_EV_KNOB = 3, MPC_S
  * (sent when the page gets the screen, nothing turned: for pickup, catch a value only once the knob reaches it) */
 typedef struct { int type, id, value; } mpc_sdraw_event;
 typedef void (*mpc_sdraw_input_fn)(void *user, const mpc_sdraw_event *e);
+typedef struct { int id; char name[48]; } mpc_sdraw_info;   /* an open client (version >= 4) */
 typedef struct {
     int version;
     int width, height;
@@ -55,6 +56,8 @@ typedef struct {
     void (*present)(mpc_sdraw_client *c, int x, int y, int w, int h);
     void (*set_input)(mpc_sdraw_client *c, mpc_sdraw_input_fn fn, void *user);   /* version >= 2 only */
     int (*show)(mpc_sdraw_client *c, const char *name);   /* version >= 3 only: hand the screen to the page named name */
+    int (*list)(mpc_sdraw_client *c, mpc_sdraw_info *out, int max);   /* version >= 4: the other open clients, oldest first; returns how many */
+    int (*show_id)(mpc_sdraw_client *c, int id);   /* version >= 4: show() by id */
 } mpc_sdraw_api;
 #endif
 
@@ -205,6 +208,21 @@ static inline int sdc_page_show(sdc_page *pg, const char *name)
 {
     if (!pg->api || pg->api->version < 3 || !pg->api->show) return -1;
     return pg->api->show(pg->c, name);
+}
+
+/* The other pages open on the draw handler, oldest first (up to max): how many there are, or -1 (draw handler older than
+ * 1.1, which can't list them). */
+static inline int sdc_page_list(sdc_page *pg, mpc_sdraw_info *out, int max)
+{
+    if (!pg->api || pg->api->version < 4 || !pg->api->list) return -1;
+    return pg->api->list(pg->c, out, max);
+}
+
+/* sdc_page_show by the page's id (from sdc_page_list): for pages that share a name. 0, or -1. */
+static inline int sdc_page_show_id(sdc_page *pg, int id)
+{
+    if (!pg->api || pg->api->version < 4 || !pg->api->show_id) return -1;
+    return pg->api->show_id(pg->c, id);
 }
 
 /* Stops the thread (waits for a frame in progress) and gives the screen back to MPC if the page had it. */
